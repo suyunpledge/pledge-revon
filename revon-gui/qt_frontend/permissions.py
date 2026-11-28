@@ -5,8 +5,9 @@ from revon.policy import Decision, Policy, ToolEffect, READ_PATH_TOOLS, WRITE_TO
 from revon.desktop_permissions import profile_policy
 from .productivity_tools import CATALOG, FILES
 from .office_controller import CATALOG as OFFICE, OFFICE_WRITES
+from pack_runtime import TOOLS as PACK_TOOLS
 
-MEDIATED = READ_PATH_TOOLS | set(READERS) | CATALOG.keys() | OFFICE.keys() | {'write_file', 'edit_file', 'apply_patch', 'delete_file', 'tool_search',
+MEDIATED = READ_PATH_TOOLS | set(READERS) | CATALOG.keys() | OFFICE.keys() | PACK_TOOLS.keys() | {'write_file', 'edit_file', 'apply_patch', 'delete_file', 'tool_search',
                              'public_search', 'view_image', 'read_pdf', 'office_render', 'run_check', '7zip_extract', 'generate_image', 'generate_video',
                              'calculator', 'datetime', 'text_transform', 'unit_convert'}
 
@@ -54,7 +55,7 @@ def authorize(profile, workspace, name, args, approve, cancel=None, template=Non
     effect = ToolEffect.FILE_READ if name in READ_PATH_TOOLS else None
     if name in {'view_image', 'read_pdf'}:
         effect = ToolEffect.FILE_READ
-    if name in READERS:
+    if name in READERS or name in PACK_TOOLS:
         effect = ToolEffect.READ
     if name in {'office_list', 'office_read', 'office_render'}:
         effect = ToolEffect.FILE_READ

@@ -98,6 +98,9 @@ def _runtime_base() -> Path:
     源码运行 = 本文件所在目录；PyInstaller 单文件打包后 = sys._MEIPASS
     （内置目录随 datas 一起解包到那里）。拿错的话 exe 里市场会是空的。
     """
+    source = Path(__file__).resolve().parent
+    if (source / "catalog.builtin.json").is_file():
+        return source
     base = getattr(sys, "_MEIPASS", None)
     if base:
         return Path(base)
@@ -133,7 +136,7 @@ HIGH_RISK_PERMISSIONS = {"shell:exec", "workspace:write", "net:outbound", "model
                          "repo.write", "process.exec", "network.github"}
 CAPABILITY_ALIASES = {"workspace:read": "repo.read", "workspace:write": "repo.write",
                       "shell:exec": "process.exec", "net:outbound": "network.outbound"}
-GRANTABLE_CAPABILITIES = frozenset({"repo.read", "repo.write", "skill.read"})
+GRANTABLE_CAPABILITIES = frozenset({"repo.read", "repo.write", "skill.read", "compute.local"})
 CONTRIBUTION_TYPES = frozenset({"tools", "skills", "policies", "hooks", "providers", "agents", "ui_panels",
                                 "patch"})
 #: contributions.patch：插件束补丁层（DSH「profile = 有序插件束补丁层」）。插件
@@ -1141,6 +1144,9 @@ class Marketplace:
                 "必须先在界面上确认信任才能启用")
         # 安装后依赖可能被卸载/降级，启用时复查一遍
         self._check_requirements_ok(plugin)
+        from pack_runtime import PACKS, install
+        if pid in PACKS:
+            install(self.home, pid)
         self._enable_in_state(pid)
         self._bump_generation(pid)
         self.save()

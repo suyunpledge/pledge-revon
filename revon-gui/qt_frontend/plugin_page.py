@@ -96,6 +96,9 @@ def plugin_state(plugin, workspace):
 
 
 def plugin_actions(plugin, state):
+    from pack_runtime import PACKS
+    if plugin.id in PACKS and state in {'available', 'needs_ack', 'installed'}:
+        return [button('activatePack', '安装并授权本工作区'), button('inspect', '详情')]
     if state == 'available':
         return [button('install', '安装'), button('inspect', '详情')]
     actions = [button('inspect', '详情')]
@@ -194,6 +197,9 @@ def act(home, market, workspace, action, values, approve):
         return None
     if action == 'inspect':
         return plugin.to_dict()
+    if action == 'activatePack':
+        from .pack_tools import activate
+        return activate(market, key, workspace)
     if action == 'install':
         return market.install_from_catalog(key).to_dict()
     if action == 'ack':

@@ -8,6 +8,11 @@ from pathlib import Path
 import signal
 import sys
 import threading
+
+if __name__ == "__main__":
+    # The embedded interpreter starts isolated and omits even the script directory.
+    host = Path(__file__).resolve().parent
+    sys.path.extend([str(host), str(host.parent)])
 from revon.compat import plugin_manifest
 
 

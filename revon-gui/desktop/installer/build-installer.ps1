@@ -18,6 +18,7 @@
 param(
     [string]$PythonExe = '',
     [string]$Iscc = '',
+    [string]$RuntimeCache = '',
     [switch]$SkipPyInstaller
 )
 $ErrorActionPreference = 'Stop'
@@ -56,6 +57,9 @@ if (-not $SkipPyInstaller) {
 }
 
 # 2. App source, as plain files (no tests, caches or build output)
+if (-not $RuntimeCache) { $RuntimeCache = Join-Path $work 'downloads' }
+& $PythonExe (Join-Path $root 'scripts/prepare_pack_runtimes.py') (Join-Path $bundle 'runtimes') --cache $RuntimeCache
+if ($LASTEXITCODE -ne 0) { throw 'Private plugin runtime staging failed.' }
 $app = Join-Path $bundle 'app'
 if (Test-Path -LiteralPath $app) { Remove-Item -LiteralPath $app -Recurse -Force }
 $excludeDirs = @('__pycache__', '.pytest_cache', 'tests', 'build', 'dist', 'build-source', 'output', 'node_modules', 'installer')

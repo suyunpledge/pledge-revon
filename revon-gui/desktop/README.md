@@ -132,10 +132,16 @@ python run_offline_checks.py test_ui_ergonomics
 `python -m unittest test_sysmon -v` 验证首次与重复探测、失败后停止重试，
 并在 Windows 上启动真实控制台程序确认 `GetConsoleWindow()` 返回零。
 
+## Windows 基础安装包与能力包
+
+Windows x64 安装包自带 Qt 主程序、预编译的 3D 预览 DLL，以及插件专用的 Python 和 Node.js。打开插件市场，对「AI 文本语种识别」或「Markdown 标题目录」点击「安装并授权本工作区」，就可以在当前工作区对话中调用。首次启用需下载该包锁定的依赖，之后可离线使用。撤销工作区授权会立即停止接受新调用。
+
+能力包在独立子进程运行，依赖存于 revon 数据目录的 `pack-environments/<插件 ID>/<版本摘要>`。Python 包和 npm 包都要通过归档和解包内容校验。离线部署时可将同版本的 wheel 和 tgz 放进安装目录下的 `offline-packs`；文件名和 SHA-256 见 `revon-gui/pack_runtime.py`。本地第三方 Python 插件仍需单独确认信任。
+
 ## 已知取舍
 
 - **单文件模式**首次启动有约 1–3 秒解包时间（exe 内部的运行时解到临时目录）；
   想更快可改 spec 为 one-dir。
-- 未做安装包（Inno Setup / MSI）与代码签名；内部分发够用，外发需自行签名避免 SmartScreen 提示。
+- Windows 安装器使用 Inno Setup。未签名安装包可能会触发 SmartScreen 提示。
 - 3D 细节丰富的标志在 16px 下会糊成一团橙色——这是位图缩放的固有代价；
   若要求小尺寸清晰，需要另做一版简化图形。

@@ -406,11 +406,12 @@ class PluginRuntime:
                 if len(text.encode("utf-8")) > 1_500_000:
                     raise ValueError("插件请求超过传输上限")
                 request.write_text(text, encoding="utf-8")
-                if getattr(sys, "frozen", False):
-                    command = [sys.executable, "--revon-plugin-worker", str(request), str(output)]
-                else:
-                    command = [sys.executable, "-B", str(Path(__file__).with_name("plugin_worker.py")),
-                               str(request), str(output)]
+                from pack_runtime import runtime_dir
+                python = runtime_dir() / "python/python.exe"
+                if not getattr(sys, "frozen", False) and not python.is_file():
+                    python = sys.executable
+                command = [python, "-I", "-S", "-B", "-X", "utf8", Path(__file__).with_name("plugin_worker.py"),
+                           request, output]
                 process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                     start_new_session=os.name != "nt")

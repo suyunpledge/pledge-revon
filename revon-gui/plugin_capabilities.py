@@ -13,11 +13,13 @@ from pathlib import Path
 import stat
 import threading
 import uuid
+from pack_runtime import TOOLS as PACK_TOOLS, run as run_pack
 
 from plugin_market import Marketplace, linked, market_lock, workspace_key
 from plugin_runtime import BUILTIN_TOOL_NAMES, LoadReport, _validate_schema, re_fullmatch
 
 TARGETS = {
+    **{name: ("compute.local", {"text": str}) for name in PACK_TOOLS},
     "read_file": ("repo.read", {"path": str, "limit": int}),
     "list_dir": ("repo.read", {"path": str}),
     "write_file": ("repo.write", {"path": str, "content": str, "append": bool}),
@@ -76,6 +78,7 @@ class CapabilityRuntime:
         self._lock = threading.RLock()
 
     def reload(self, *, reserved_names=(), available_targets=None, plugins=None):
+        from revon.policy import ToolEffect
         from revon.tools import ToolRegistry, ToolSpec
         import plugin_dependencies
         from plugin_market import _keystone_version
@@ -114,7 +117,9 @@ class CapabilityRuntime:
                         raise ValueError(f"工具名冲突：{name}")
                     if target not in TARGETS:
                         raise ValueError(f"未接入受控执行器：{target}")
-                    if available is not None and target not in available:
+                    if target in PACK_TOOLS and (PACK_TOOLS[target] != plugin.id or name != "keystone_" + target):
+                        raise ValueError("能力包与已注册的工具不匹配。")
+                    if target not in PACK_TOOLS and available is not None and target not in available:
                         report.skipped.append((plugin.id, f"等待工具桥提供 {target}"))
                         continue
                     capability, arg_types = TARGETS[target]
@@ -174,10 +179,11 @@ class CapabilityRuntime:
                         meta["skill_body"] = body
                     batch[name] = meta
                 for name, meta in batch.items():
+                    compute = meta["target"] in PACK_TOOLS
                     registry.register(ToolSpec(name, meta["description"],
                         lambda args, ctx, m=meta: self._execute(m, args, ctx),
-                        read_only=meta["capability"] in {"repo.read", SKILL_CAPABILITY},
-                        schema=meta["parameters"]))
+                        read_only=meta["capability"] in {"repo.read", SKILL_CAPABILITY, "compute.local"},
+                        schema=meta["parameters"]), trusted=compute, effect=ToolEffect.READ if compute else None)
                     tools[name] = meta
                 if batch:
                     report.loaded.append(plugin.id)
@@ -256,6 +262,8 @@ class CapabilityRuntime:
             enums = schema.get("properties", {}).get(key, {}).get("enum")
             if enums is not None and value not in enums:
                 raise ValueError(f"参数不在 enum 中：{key}")
+        if meta["target"] in PACK_TOOLS:
+            return args
         raw_path = args.get("path")
         if not isinstance(raw_path, str) or not raw_path or "\x00" in raw_path:
             raise ValueError("工具需要明确文件路径")
@@ -307,6 +315,10 @@ class CapabilityRuntime:
                 "call": uuid.uuid4().hex, "plugin": meta["plugin_id"], "fingerprint": meta["token"][0],
                 "tool": meta["name"], "target": meta["target"], "workspace": str(self.workspace), "session": self.session}
             self.market.audit(**event, phase="dispatch", outcome="pending")
+            if meta["target"] in PACK_TOOLS:
+                value = run_pack(self.market.home, plugin.id, arguments)
+                return ToolResult(True, json.dumps(value, ensure_ascii=False),
+                                  meta={"plugin": plugin.id, "authorization": "allow"})
             ctx.extras["plugin_execution_possible"] = True
             response = self.dispatch(meta["target"], arguments, plugin_context={
                 "id": meta["plugin_id"], "tool": meta["name"], "capability": meta["capability"],

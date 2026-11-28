@@ -15,7 +15,7 @@ HERE = Path(SPECPATH)
 GUI = HERE.parents[1]
 ROOT = GUI.parent
 ICON = GUI / 'desktop' / 'revon.ico'
-SKIP_DIRS = {'__pycache__', 'tests', 'build', 'dist', 'build-source', 'node_modules', 'installer'}
+SKIP_DIRS = {'__pycache__', 'tests', 'build', 'dist', 'build-source', 'node_modules', 'installer', 'pack_entries'}
 
 
 def own_modules():

@@ -288,7 +288,8 @@ def run(client, messages, *, model, effort, cancel, authorize, chunk, checkpoint
     chat_mode = chat_mcp is not None
     mcp_tools, call_mcp = (chat_mcp if chat_mode else mcp) or ({}, None)
     if chat_mode:
-        mcp_tools = {name: entry for name, entry in mcp_tools.items() if name.startswith('mcp_') or name in productivity_tools.NAMES or entry[1] == ('visual', 'view_image')}
+        mcp_tools = {name: entry for name, entry in mcp_tools.items() if name.startswith('mcp_') or name in productivity_tools.NAMES
+                     or entry[1] == ('visual', 'view_image') or entry[1] == ('compute_pack', name)}
     tools = schemas(mcp_tools, chat_mode)
     direct_svg = (direct_svg and not effort and not resuming and not chat_mode
                   and any(row['function']['name'] == 'keystone_write_file' for row in tools or ()))

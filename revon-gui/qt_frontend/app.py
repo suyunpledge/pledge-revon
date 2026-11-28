@@ -16,6 +16,7 @@ from .pet_chat import PetChat
 from .media_generation import tool_set as media_tool_set
 from .workbench import WorkbenchController
 from .productivity_tools import with_productivity
+from .pack_tools import with_packs
 from revon.compat import default_home
 
 
@@ -145,7 +146,7 @@ def main(argv=None):
                 return workbench.call_service(target[1], arguments, cancel, target[2])
             return workbench.mcp.call_chat_tool(target, arguments, cancel)
 
-        return with_productivity((tools, dispatch), controller.store.folder)
+        return with_packs(with_productivity((tools, dispatch), controller.store.folder), args.home, workspace)
 
     controller.mcp_tools = mcp_tools
     def chat_mcp_tools():
@@ -157,7 +158,7 @@ def main(argv=None):
                 return visual_tools.call(target, arguments, None, controller.store.folder, cancel, chat=True)
             return workbench.mcp.call_chat_tool(target, arguments, cancel)
 
-        return with_productivity((tools, dispatch), controller.store.folder)
+        return with_packs(with_productivity((tools, dispatch), controller.store.folder), args.home, workbench.workspace)
 
     controller.chat_mcp_tools = chat_mcp_tools
     workbench.pets.bind(controller, workbench)

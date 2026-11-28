@@ -5,6 +5,8 @@ $guiDirectory = Split-Path -Parent $PSScriptRoot
 $repoDirectory = Split-Path -Parent $guiDirectory
 $distDirectory = Join-Path $PSScriptRoot 'dist'
 $buildDirectory = Join-Path $PSScriptRoot 'build-source'
+& $PythonExe (Join-Path $repoDirectory 'scripts/prepare_pack_runtimes.py') (Join-Path $buildDirectory 'pack-runtimes') --cache (Join-Path $buildDirectory 'downloads')
+if ($LASTEXITCODE -ne 0) { throw 'Private plugin runtime staging failed.' }
 $buildId = [guid]::NewGuid().ToString('N')
 $staging = Join-Path $buildDirectory "publish-$buildId"
 & $PythonExe -m PyInstaller --noconfirm --distpath $staging --workpath $buildDirectory (Join-Path $PSScriptRoot 'revon-source.spec')

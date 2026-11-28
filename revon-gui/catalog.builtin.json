@@ -4,6 +4,22 @@
   "note": "随程序分发的离线目录。联网时自动同步远程源（Claude 官方市场 + ClawHub，72 小时节流，可在 state 里自定义或关闭）。",
   "entries": [
     {
+      "id": "pack-language-id", "name": "AI 文本语种识别", "version": "1.0.0", "kind": "tool",
+      "icon": "文", "author": "revon", "summary": "私有 Python 运行训练好的语言识别模型，首次启用下载约 1 MB，此后可离线使用。",
+      "capabilities": ["compute.local"], "contributions": {"tools": [
+        {"name": "keystone_language_detect", "target": "language_detect", "description": "Identify the language of supplied text using a local trained language detector.",
+         "parameters": {"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}}
+      ]}
+    },
+    {
+      "id": "pack-markdown-outline", "name": "Markdown 标题目录", "version": "1.0.0", "kind": "tool",
+      "icon": "¶", "author": "revon", "summary": "TypeScript 插件提取 ATX 标题、行号和 GitHub 风格锚点，首次启用下载约 6 KB。",
+      "capabilities": ["compute.local"], "contributions": {"tools": [
+        {"name": "keystone_markdown_outline", "target": "markdown_outline", "description": "Extract Markdown ATX headings, line numbers and GitHub-style unique anchors from supplied text.",
+         "parameters": {"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}}
+      ]}
+    },
+    {
       "id": "tool-repo-files",
       "name": "工作区文件能力",
       "version": "1.0.0",
