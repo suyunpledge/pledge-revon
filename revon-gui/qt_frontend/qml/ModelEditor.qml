@@ -372,8 +372,14 @@ Popup {
             }
             GlassButton {
                 objectName: "testModel"
-                material: editor.material; glyph: "plug"; text: "测试连接"
+                material: editor.material; glyph: "plug"; text: "测试目录"
                 onClicked: editor.service.test(editor.currentId, editor.values(), keyField.text)
+            }
+            GlassButton {
+                objectName: "verifyModel"
+                material: editor.material; glyph: "check"; text: "验证模型"
+                tip: "向此模型发送一次短请求，按供应商规则计费"
+                onClicked: editor.service.test(editor.currentId, editor.values(), keyField.text, true)
             }
             GlassButton {
                 objectName: "saveModel"

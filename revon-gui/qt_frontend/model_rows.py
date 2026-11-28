@@ -28,6 +28,7 @@ import model_onboarding
 from provider_catalog import model_choice_labels, route_fields
 import secret_store
 from revon.compat import default_home
+from revon.config import ConfigError, resolve
 from revon.provider_requests import recent_requests
 from revon.secrets import redact
 
@@ -244,11 +245,13 @@ class ModelRows(QObject):
 
     @Slot()
     def refreshHistory(self):
+        from revon.provider_errors import HINTS, provider_error_kind
         labels = {row['id']: row['title'] for row in self._rows}
         history = []
         for record in recent_requests(self.home):
             fields = route_fields({'baseURL': record['request_url']})
-            history.append({**record, 'providerName': fields['providerName'],
+            kind = record.get('error_kind') or provider_error_kind(record.get('http_status'))
+            history.append({**record, 'failureHint': HINTS.get(kind, ''), 'providerName': fields['providerName'],
                             'providerKey': fields['providerKey'], 'providerIcon': fields['providerIcon'],
                             'rowLabel': labels.get(record['provider_id'], '')})
         self._history = history
@@ -319,7 +322,8 @@ class ModelRows(QObject):
                 secret_store.save(current, path=self.credential_path)
 
     @Slot(str, 'QVariantMap', str)
-    def test(self, row_id, values, key):
+    @Slot(str, 'QVariantMap', str, bool)
+    def test(self, row_id, values, key, inference=False):
         if self._busy:
             return
         if self.demo:
@@ -333,19 +337,32 @@ class ModelRows(QObject):
             wire = str(values.get('wire', 'openai'))
             if wire not in WIRES:
                 raise ValueError('请选择 OpenAI 兼容、Anthropic 或 Google 原生协议。')
-            if not key and not model_onboarding.model_list_url(address):
-                row = next((r for r in load_user_layer(self.home) if r.get('id') == row_id), None)
-                ref = env_ref((row or {}).get('config', {}))
-                key = (self._secrets_env().get(ref) or os.environ.get(ref, '')) if ref else ''
+            model = str(values.get('model') or '').strip()
+            if inference and not model:
+                raise ValueError('请先填写要验证的模型 ID。')
+            row = next((r for r in load_user_layer(self.home) if r.get('id') == row_id), {})
+            saved = row.get('config', {})
+            config = {}
+            if address == str(saved.get('baseURL', '')).rstrip('/') and wire == saved.get('wire', 'openai'):
+                if inference or not model_onboarding.model_list_url(address):
+                    config = resolve(saved, {'env': {**os.environ, **self._secrets_env()}})
+                    key = key or config.get('apiKey', '')
+            config.update(model=model, baseURL=address, wire=wire, apiKey=key)
+        except ConfigError:
+            self._report(False, '无法读取当前模型配置，请检查配置中的引用。')
+            return
         except (OSError, ValueError) as exc:
             self._report(False, str(exc))
             return
-        self._busy, self._ok, self._status = True, False, '正在测试连接…'
+        self._busy, self._ok, self._status = True, False, '正在验证模型调用…' if inference else '正在读取模型目录…'
         self.changed.emit()
 
         def worker():
             try:
-                result = model_onboarding.probe(address, key, wire=wire)
+                if inference:
+                    result = model_onboarding.verify_model(row_id, config, home=self.home)
+                else:
+                    result = model_onboarding.probe(address, key, wire=wire)
             except Exception:
                 result = {'ok': False, 'error': '测试失败，请检查本机网络与配置。'}
             self._finished.emit(result)

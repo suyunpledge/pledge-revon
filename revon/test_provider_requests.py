@@ -1,6 +1,8 @@
 import io
 import json
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import tempfile
@@ -18,6 +20,31 @@ from .provider_requests import open_recorded, recent_requests, safe_url
 class ProviderRequestTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def test_legacy_history_upgrades_and_records_only_the_latest_reason(self):
+        path = self.home / 'provider-requests.sqlite3'
+        base = 'https://example.org/v1'
+        url = base + '/chat/completions'
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute('CREATE TABLE requests (provider_id TEXT, base_url TEXT, request_url TEXT, source TEXT, '
+                       'http_status INTEGER, last_seen REAL, attempts INTEGER, PRIMARY KEY(provider_id,base_url,request_url,source))')
+            db.execute('INSERT INTO requests VALUES (?,?,?,?,?,?,?)', ('route', base, url, 'direct', 429, 1, 1))
+        self.assertIsNone(recent_requests(self.home)[0]['error_kind'])
+        def refused(_):
+            raise urllib.error.HTTPError(url, 403, 'Forbidden', {},
+                io.BufferedReader(io.BytesIO(b'{"error":{"code":"account_billing_suspended","message":"private-detail"}}')))
+        args = dict(home=self.home, provider_id='route', base_url=base, source='direct')
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            with open_recorded(refused, urllib.request.Request(url), **args):
+                self.fail()
+        with caught.exception as exc:
+            self.assertIn(b'private-detail', exc.read())
+        self.assertEqual(recent_requests(self.home)[0]['error_kind'], 'billing')
+        self.assertNotIn(b'private-detail', path.read_bytes())
+        with open_recorded(lambda _: io.BytesIO(), urllib.request.Request(url), **args):
+            pass
+        row = recent_requests(self.home)[0]
+        self.assertEqual((row['error_kind'], row['attempts']), ('', 3))
 
     def test_safe_path_and_concurrent_attempts(self):
         url = 'https://user:private@example.org:8443/custom/key-in-path/v1/chat/completions?token=private#secret'

@@ -110,6 +110,31 @@ class _Response(io.BytesIO):
 
 
 class ConnectionTests(unittest.TestCase):
+    def test_verify_inference_checks_selected_id_once_and_classifies_refusals(self):
+        config = dict(model='example/selected', wire='openai', baseURL='https://example.org/v1')
+        for status, error, hint in [
+                (403, {'code': 'AccessDenied.Unpurchased'}, '无调用权限'),
+                (403, {'code': 'account_billing_suspended'}, '计费状态'),
+                (402, {}, '余额或可用额度不足'),
+                (429, {'code': 'insufficient_quota'}, '余额或可用额度不足'),
+                (429, {'code': '1113'}, '余额或可用额度不足'),
+                (429, {'code': 'rate_limit_exceeded'}, '请求频率受限'),
+                (400, {'code': 'InvalidSubscription'}, '订阅未生效')]:
+            with self.subTest(status=status, error=error):
+                calls = []
+                def opener(request, **kw):
+                    calls.append((request.full_url, json.loads(request.data)['model']))
+                    raise urllib.error.HTTPError(request.full_url, status, 'refused', {},
+                        io.BytesIO(json.dumps({'error': error}).encode()))
+                result = mo.verify_model('route', config, home=None, opener=opener)
+                self.assertFalse(result['ok'])
+                self.assertIn(hint, result['error'])
+                self.assertEqual(calls, [('https://example.org/v1/chat/completions', 'example/selected')])
+        for payload, ok in [({'data': []}, False), ({'choices': [{'message': {'content': 'OK'}}]}, True)]:
+            result = mo.verify_model('route', config, home=None,
+                opener=lambda *a, **kw: _Response(json.dumps(payload).encode()))
+            self.assertEqual(result['ok'], ok)
+
     def test_google_native_and_compatible_presets_save_and_probe_the_same_wire(self):
         for plan in mo.BY_KEY['google'].plans:
             with self.subTest(wire=plan.wire), tempfile.TemporaryDirectory() as folder:

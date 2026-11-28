@@ -10,6 +10,7 @@ import urllib.error
 from urllib.parse import urlsplit
 
 from .secrets import redact
+from .provider_errors import provider_error_kind
 
 
 _FILE = 'provider-requests.sqlite3'
@@ -54,7 +55,7 @@ def safe_url(value):
     return '/'.join([origin, *segments])
 
 
-def _record(home, provider_id, base_url, request_url, source, status):
+def _record(home, provider_id, base_url, request_url, source, status, error_kind=''):
     if provider_id is None and source == 'gateway':
         provider_id = ''  # An independently started gateway can prove its address, but not a settings row.
     if (home is None or source not in ('gateway', 'direct') or not isinstance(provider_id, str)
@@ -68,16 +69,21 @@ def _record(home, provider_id, base_url, request_url, source, status):
         folder = Path(home)
         folder.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(folder / _FILE, timeout=1)) as db, db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""CREATE TABLE IF NOT EXISTS requests (
                 provider_id TEXT, base_url TEXT, request_url TEXT, source TEXT,
-                http_status INTEGER, last_seen REAL, attempts INTEGER,
+                http_status INTEGER, last_seen REAL, attempts INTEGER, error_kind TEXT,
                 PRIMARY KEY (provider_id, base_url, request_url, source))""")
-            db.execute("""INSERT INTO requests VALUES (?, ?, ?, ?, ?, ?, 1)
+            if not any(col[1] == 'error_kind' for col in db.execute("PRAGMA table_info(requests)")):
+                db.execute("ALTER TABLE requests ADD COLUMN error_kind TEXT")
+            db.execute("""INSERT INTO requests (provider_id, base_url, request_url, source, http_status,
+                    last_seen, attempts, error_kind) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
                 ON CONFLICT(provider_id, base_url, request_url, source) DO UPDATE SET
                 attempts = attempts + 1,
                 http_status = CASE WHEN excluded.last_seen >= last_seen THEN excluded.http_status ELSE http_status END,
+                error_kind = CASE WHEN excluded.last_seen >= last_seen THEN excluded.error_kind ELSE error_kind END,
                 last_seen = MAX(last_seen, excluded.last_seen)""",
-                       (provider_id, base, target, source, status, time.time()))
+                       (provider_id, base, target, source, status, time.time(), error_kind))
             db.execute("""DELETE FROM requests WHERE rowid IN
                 (SELECT rowid FROM requests ORDER BY last_seen DESC, rowid DESC LIMIT -1 OFFSET 512)""")
     except (OSError, sqlite3.Error):
@@ -92,8 +98,9 @@ def recent_requests(home, *, limit=100):
             return []
         with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=.15)) as db:
             db.row_factory = sqlite3.Row
+            field = 'error_kind' if any(c[1] == 'error_kind' for c in db.execute('PRAGMA table_info(requests)')) else 'NULL'
             return [dict(row) for row in db.execute(
-                """SELECT provider_id, base_url, request_url, source, http_status, last_seen, attempts
+                f"""SELECT provider_id, base_url, request_url, source, http_status, last_seen, attempts, {field} AS error_kind
                 FROM requests ORDER BY last_seen DESC, rowid DESC LIMIT ?""", (max(0, min(int(limit), 512)),))]
     except (OSError, sqlite3.Error):
         return []
@@ -106,7 +113,16 @@ def open_recorded(opener, request, *, home, provider_id, base_url, source, **opt
         try:
             response = stack.enter_context(opener(request, **options))
         except urllib.error.HTTPError as exc:
-            _record(home, provider_id, base_url, request.full_url, source, exc.code)
+            # The gateway still forwards this body. Peek without consuming it.
+            detail = getattr(exc, '_keystone_detail', '')
+            if not detail and home is not None:
+                peek = getattr(exc.fp, 'peek', None)
+                if peek:
+                    try:
+                        detail = peek(4096)[:4096]
+                    except (OSError, ValueError, http.client.HTTPException):
+                        pass
+            _record(home, provider_id, base_url, request.full_url, source, exc.code, provider_error_kind(exc.code, detail))
             raise
         except (OSError, http.client.HTTPException):
             _record(home, provider_id, base_url, request.full_url, source, None)

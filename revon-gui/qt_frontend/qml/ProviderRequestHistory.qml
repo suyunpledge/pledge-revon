@@ -57,6 +57,11 @@ ColumnLayout {
                 AddressRow { label: "配置地址"; address: item.modelData.base_url || "" }
                 AddressRow { label: "请求地址"; address: item.modelData.request_url || "" }
                 Text {
+                    Layout.fillWidth: true; visible: text.length > 0
+                    text: item.modelData.failureHint || ""; wrapMode: Text.Wrap; textFormat: Text.PlainText
+                    color: Theme.warning; font.pixelSize: 12
+                }
+                Text {
                     color: Theme.textMuted; font.pixelSize: 11
                     text: (item.modelData.source === "gateway" ? "网关" : "直连") + "  ·  共 " + item.modelData.attempts + " 次尝试  ·  "
                         + Qt.formatDateTime(new Date(Number(item.modelData.last_seen) * 1000), "yyyy-MM-dd hh:mm:ss")

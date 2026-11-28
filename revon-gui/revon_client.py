@@ -137,25 +137,12 @@ class ModelStreamInterrupted(GatewayError):
 
 
 def check_model_credit(detail, status=None):
-    """Distinguish explicit provider billing refusals from throttling and interrupted streams."""
-    if isinstance(detail, str):
-        try:
-            detail = json.loads(detail)
-        except ValueError:
-            pass
-    if isinstance(detail, dict):
-        detail = detail.get('error', detail)
-    if isinstance(detail, dict):
-        codes = (detail.get('code'), detail.get('type'))
-        message = str(detail.get('message', ''))
-    else:
-        codes, message = (), str(detail or '')
-    if (status == 402 or any(code in ('insufficient_quota', 'insufficient_balance', 'billing_hard_limit_reached')
-                             for code in codes)
-            or any(marker in message.casefold() for marker in
-                   ('credit balance is too low', 'insufficient credits', 'insufficient balance', '账户余额不足'))):
+    """Surface permanent provider refusals before scheduling a transport retry."""
+    from revon.provider_errors import HINTS, provider_error_kind
+    kind = provider_error_kind(status, detail)
+    if kind and kind != 'rate_limit':
         label = f'HTTP {status} · ' if status else ''
-        raise GatewayError(label + '模型服务商报告余额或可用额度不足。请检查该模型账户的账单或切换模型。')
+        raise GatewayError(label + HINTS[kind])
 
 
 def http_error_detail(error, limit=500):

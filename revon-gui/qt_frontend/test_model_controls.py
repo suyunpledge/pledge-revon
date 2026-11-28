@@ -217,6 +217,18 @@ class ModelRowEditingTests(unittest.TestCase):
         view = next(r for r in self.service.rows if r['id'] == row_id)
         return {**{k: view[k] for k in ('label', 'baseURL', 'model', 'wire', 'temperature', 'efforts')}, **change}
 
+    def test_verify_uses_the_edited_model_and_binds_saved_credentials_to_the_saved_endpoint(self):
+        for address, expect_saved in [('https://api.deepseek.com', True), ('https://other.example/v1', False)]:
+            with self.subTest(address=address), patch('model_onboarding.verify_model',
+                    return_value={'ok': True, 'message': 'ok'}) as verify:
+                self.service.test('ds-1', self.values('ds-1', baseURL=address, model='other-model'), '', True)
+                until(lambda: not self.service.busy)
+                verify.assert_called_once()
+                config = verify.call_args.args[1]
+                self.assertEqual((config['baseURL'], config['model']), (address, 'other-model'))
+                self.assertEqual(bool(config['apiKey']), expect_saved)
+        self.assertEqual(self.row('ds-1')['config']['model'], 'deepseek-v4-pro')
+
     def test_projection_reports_key_state_without_values(self):
         rows = {r['id']: r for r in self.service.rows}
         self.assertEqual(rows['ds-1']['keyState'], 'saved')

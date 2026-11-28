@@ -174,7 +174,7 @@ Popup {
             GlassButton {
                 material: panel.material; visible: panel.showForm
                 objectName: "setupTest"; enabled: !panel.service.busy
-                text: panel.english ? "Test connection" : "测试连接"
+                text: panel.english ? "Test model directory" : "测试模型目录"
                 onClicked: form.testConnection()
             }
             GlassButton {

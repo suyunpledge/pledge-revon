@@ -11,6 +11,7 @@ Coding 的 ``ModelSettingsSource`` 与 Work Mode 读的都是这两处，保存�
 from __future__ import annotations
 
 import copy
+import http.client
 import json
 import re
 import urllib.error
@@ -304,6 +305,28 @@ def test_connection(vendor_id: str, api_key: str, *, base_url: str | None = None
     return probe(address, key, wire=_wire_for(v, address), keyless=v.keyless, timeout=timeout, opener=opener)
 
 
+def verify_model(row_id, config, *, home, opener=open_authenticated):
+    """One short inference on the selected route, using the normal protocol adapter."""
+    from revon.config import Config
+    from revon.model import HttpTransport, ModelRouter, TransportError
+    from revon.provider_errors import HINTS
+
+    model = config['model']
+    route = Config()
+    route.apply_patch([{'id': row_id, 'name': 'provider:verify', 'config': config}])
+    transport = HttpTransport(timeout=30, response_opener=opener, history_home=home)
+    provider = ModelRouter.from_config(route, transport=transport).providers[row_id]
+    try:
+        text, _, meta = transport.complete(provider, model, [{'role': 'user', 'content': 'Reply OK.'}], max_tokens=32)
+    except TransportError as exc:
+        status = f'HTTP {exc.http_status} · ' if exc.http_status else ''
+        hint = HINTS.get(exc.error_kind) or '模型调用失败，请检查模型 ID、接口和请求记录。'
+        return {'ok': False, 'error': f'{model} · {status}{hint}'}
+    if not (text or meta.get('finish_reason') or meta['assistant_message'].get('reasoning_content')):
+        return {'ok': False, 'error': f'{model} 的接口已响应，但未返回有效的推理结果。'}
+    return {'ok': True, 'message': f'{model} 已通过推理验证。'}
+
+
 def probe(address: str, key: str, *, wire: str = "openai", keyless: bool = False,
           timeout: float = 8.0, opener=open_authenticated) -> dict:
     """GET <base>/models with the given credential; shared by setup and row editing."""
@@ -335,11 +358,17 @@ def probe(address: str, key: str, *, wire: str = "openai", keyless: bool = False
         with opener(request, timeout=timeout) as response:
             body = response.read(max_bytes + 1)
     except urllib.error.HTTPError as exc:
-        exc.close()
+        from revon.provider_errors import HINTS, provider_error_kind
+        try:
+            kind = provider_error_kind(exc.code, exc.read(4096))
+        except (OSError, http.client.HTTPException):
+            kind = provider_error_kind(exc.code)
+        finally:
+            exc.close()
         if public_list:
             return {"ok": False, "error": f"OpenCode 公开模型目录返回 HTTP {exc.code}，请稍后再试。"}
-        if exc.code in (401, 403):
-            return {"ok": False, "error": "密钥无效或没有权限，请检查是否复制完整"}
+        if kind:
+            return {"ok": False, "error": f"模型目录 HTTP {exc.code} · {HINTS[kind]}"}
         return {"ok": False, "error": f"服务返回 {exc.code}，可以先保存，稍后再试"}
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         hint = "本地 Ollama 没有运行" if keyless else "网络连不上该厂商（海外厂商可能需要代理）"
@@ -360,5 +389,5 @@ def probe(address: str, key: str, *, wire: str = "openai", keyless: bool = False
         else:
             if public_list:
                 return {"ok": True, "message": f"已连接公开目录，共 {len(models)} 个模型。密钥和套餐权限将在调用模型时验证。"}
-            return {"ok": True, "message": f"连接成功，可用模型 {len(models)} 个"}
+            return {"ok": True, "message": f"模型目录已连接，共 {len(models)} 个模型。推理权限需要单独验证。"}
     return {"ok": False, "error": "接口已响应，但未返回有效的模型列表。请检查接口地址。"}

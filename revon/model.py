@@ -80,6 +80,9 @@ def warmth_store() -> CacheWarmth:
 
 
 class TransportError(RuntimeError):
+    http_status = None
+    error_kind = ''
+
     def __init__(self, message, *args):
         from .secrets import redact
         super().__init__(redact(str(message)), *args)
@@ -777,14 +780,17 @@ class HttpTransport:
         except urllib.error.HTTPError as exc:
             headers_ms = round((time.monotonic() - wire_start) * 1000)
             wire_status = f'http_{exc.code}'
+            from .provider_errors import provider_error_kind
             from .secrets import redact
             try:
-                detail = redact(getattr(exc, '_keystone_detail', '') or exc.read(500).decode("utf-8", "replace"))[:300]
+                raw_detail = getattr(exc, '_keystone_detail', '') or exc.read(4096).decode("utf-8", "replace")
             except (OSError, http.client.HTTPException):
-                detail = redact(str(exc.reason))[:300]
+                raw_detail = str(exc.reason)
             finally:
                 exc.close()
-            if exc.code == 429:
+            kind = provider_error_kind(exc.code, raw_detail)
+            detail = redact(raw_detail)[:300]
+            if exc.code == 429 and kind not in ('balance', 'billing', 'subscription'):
                 # Retry-After from HTTPError.headers (case-insensitive Mapping)
                 retry_after = None
                 hdrs = getattr(exc, "headers", None) or getattr(exc, "hdrs", None)
@@ -795,13 +801,13 @@ class HttpTransport:
                             retry_after = float(ra)
                         except (ValueError, TypeError):
                             pass
-                raise RateLimited(
-                    f"{provider.name}: 429 {detail}",
-                    retry_after=retry_after,
-                ) from None
-            if exc.code in (408, 500, 502, 503, 504, 524, 529):
-                raise Overloaded(f"{provider.name}: {exc.code} {detail}") from None
-            raise BadRequest(f"{provider.name}: {exc.code} {detail}") from None
+                error = RateLimited(f"{provider.name}: 429 {detail}", retry_after=retry_after)
+            elif exc.code in (408, 500, 502, 503, 504, 524, 529) and not kind:
+                error = Overloaded(f"{provider.name}: {exc.code} {detail}")
+            else:
+                error = BadRequest(f"{provider.name}: {exc.code} {detail}")
+            error.http_status, error.error_kind = exc.code, kind
+            raise error from None
         except RequestCancelled:
             wire_status = 'cancelled'
             raise ModelCancelled('已停止模型请求') from None
