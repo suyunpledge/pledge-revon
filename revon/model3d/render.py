@@ -9,6 +9,7 @@ cells in the top view, which a model can read without image input.
 from __future__ import annotations
 
 import math
+import os
 import struct
 import zlib
 
@@ -40,13 +41,13 @@ def _basis(name):
     return _iso_basis() if name == "iso" else VIEWS[name]
 
 
-def _raster(mesh: Mesh, view: str, w: int, h: int, margin: int = 6):
-    """Return (depth, shade, front) buffers; None where empty."""
+def _projected_faces(mesh: Mesh, view: str, w: int, h: int, margin: int):
+    """Yield lit faces in draw order, using one projection for both rasterizers."""
     R, U, F = _basis(view)
     v = mesh.vertices
     proj = [(dot(p, R), dot(p, U), dot(p, F)) for p in v]
     if not proj:
-        return [None] * (w * h), [0.0] * (w * h), [True] * (w * h)
+        return
     xs = [p[0] for p in proj]
     ys = [p[1] for p in proj]
     x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
@@ -55,9 +56,6 @@ def _raster(mesh: Mesh, view: str, w: int, h: int, margin: int = 6):
     ox = (w - (x1 - x0) * s) / 2 - x0 * s
     oy = (h - (y1 - y0) * s) / 2 - y0 * s
     scr = [(p[0] * s + ox, h - (p[1] * s + oy), p[2]) for p in proj]
-    depth: list = [None] * (w * h)
-    shade = [0.0] * (w * h)
-    front = [True] * (w * h)
     light = _norm((0.35, 0.25, 1.0))
     for a, b, c in mesh.triangles:
         n = cross(sub(v[b], v[a]), sub(v[c], v[a]))
@@ -74,11 +72,19 @@ def _raster(mesh: Mesh, view: str, w: int, h: int, margin: int = 6):
         area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
         if abs(area) < 1e-12:
             continue
+        yield scr[a], scr[b], scr[c], 1.0 / area, lum, is_front
+
+
+def _raster(mesh: Mesh, view: str, w: int, h: int, margin: int = 6):
+    """Return (depth, shade, front) buffers; None where empty."""
+    depth: list = [None] * (w * h)
+    shade = [0.0] * (w * h)
+    front = [True] * (w * h)
+    for (ax, ay, az), (bx, by, bz), (cx, cy, cz), inv, lum, is_front in _projected_faces(mesh, view, w, h, margin):
         minx = max(0, int(math.floor(min(ax, bx, cx))))
         maxx = min(w - 1, int(math.ceil(max(ax, bx, cx))))
         miny = max(0, int(math.floor(min(ay, by, cy))))
         maxy = min(h - 1, int(math.ceil(max(ay, by, cy))))
-        inv = 1.0 / area
         for py in range(miny, maxy + 1):
             fy = py + 0.5
             row = py * w
@@ -112,35 +118,50 @@ def png_bytes(width: int, height: int, rgb: bytearray) -> bytes:
             + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b""))
 
 
-def contact_sheet(mesh: Mesh, size: int = 256) -> bytes:
+def _face_color(lum, front):
+    if front:
+        channels = (70 + 150 * lum, 110 + 125 * lum, 150 + 100 * lum)
+    else:
+        channels = (120 + 135 * lum, 30 + 40 * lum, 120 + 135 * lum)
+    return bytes(min(255, int(c)) for c in channels)
+
+
+def _python_tile(mesh, view, size):
+    depth, shade, front = _raster(mesh, view, size, size)
+    tile = bytearray(b"\xfa\xfa\xfc") * (size * size)
+    for k, z in enumerate(depth):
+        if z is not None:
+            tile[k * 3:k * 3 + 3] = _face_color(shade[k], front[k])
+    return tile
+
+
+def contact_sheet(mesh: Mesh, size: int = 256, *, backend: str | None = None) -> bytes:
     """2x2 PNG: iso | front / top | right."""
+    from . import native_preview
+
+    backend = backend or os.environ.get("REVON_3D_RENDERER", "auto")
+    if backend not in ("auto", "python", "native"):
+        raise ValueError("3D renderer must be auto, python or native")
+    draw = native_preview.load() if backend != "python" else None
+    if backend == "native" and draw is None:
+        raise RuntimeError("Native 3D preview is unavailable on this installation")
     size = max(64, min(1024, int(size)))
     W, H = size * 2 + 3, size * 2 + 3
-    img = bytearray([236, 238, 242] * (W * H))
+    img = bytearray(b"\x9a\xa0\xaa") * (W * H)
     for idx, view in enumerate(("iso", "front", "top", "right")):
-        depth, shade, front = _raster(mesh, view, size, size)
+        tile = None
+        if draw is not None:
+            faces = _projected_faces(mesh, view, size, size, 6)
+            tile = native_preview.draw_tile(draw, faces, size, _face_color)
+            if tile is None and backend == "native":
+                raise ValueError("Native 3D preview could not rasterize this mesh")
+        if tile is None:
+            tile = _python_tile(mesh, view, size)
         ox = 1 + (idx % 2) * (size + 1)
         oy = 1 + (idx // 2) * (size + 1)
         for y in range(size):
-            for x in range(size):
-                k = y * size + x
-                p = ((oy + y) * W + ox + x) * 3
-                if depth[k] is None:
-                    img[p:p + 3] = bytes((250, 250, 252))
-                    continue
-                lum = shade[k]
-                if front[k]:
-                    col = (int(70 + 150 * lum), int(110 + 125 * lum), int(150 + 100 * lum))
-                else:
-                    col = (int(120 + 135 * lum), int(30 + 40 * lum), int(120 + 135 * lum))
-                img[p:p + 3] = bytes(min(255, c) for c in col)
-    # separators
-    for y in range(H):
-        for x in (0, size + 1, W - 1):
-            img[(y * W + x) * 3:(y * W + x) * 3 + 3] = b"\x9a\xa0\xaa"
-    for x in range(W):
-        for y in (0, size + 1, H - 1):
-            img[(y * W + x) * 3:(y * W + x) * 3 + 3] = b"\x9a\xa0\xaa"
+            start = ((oy + y) * W + ox) * 3
+            img[start:start + size * 3] = tile[y * size * 3:(y + 1) * size * 3]
     return png_bytes(W, H, img)
 
 

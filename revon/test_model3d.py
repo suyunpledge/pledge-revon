@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import struct
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
+from unittest.mock import patch
 
 from revon.model3d import (Mesh, SpecError, analyze, ascii_view, compile_spec, contact_sheet, decode,
                               encode, summary_lines)
@@ -276,6 +279,33 @@ class ExportTests(unittest.TestCase):
         mid = rows[len(rows) // 2]
         self.assertEqual(mid[18:22], "    ")       # the hole is see-through
         self.assertEqual(rows[0][:4], "@@@@")      # the plate is solid at the edge
+
+
+class PreviewRendererTests(unittest.TestCase):
+    def test_missing_library_falls_back_to_reference_pixels(self):
+        mesh = box(7, 5, 2)
+        with patch("revon.model3d.native_preview.load", return_value=None):
+            png = contact_sheet(mesh, 65, backend="auto")
+            self.assertEqual(png, contact_sheet(mesh, 65, backend="python"))
+            with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                contact_sheet(mesh, 65, backend="native")
+        # Uncompressed scanlines of the pre-accelerator image, independent of zlib version.
+        pos = png.index(b"IDAT")
+        length = int.from_bytes(png[pos - 4:pos], "big")
+        rows = zlib.decompress(png[pos + 4:pos + 4 + length])
+        self.assertEqual(hashlib.sha256(rows).hexdigest(),
+                         "a2314b8dfaa48d841158aa9ceff4d847da8421783a87631bf284fe0ffe81a35c")
+
+    def test_native_matches_empty_degenerate_back_faces_and_depth_across_batches(self):
+        from revon.model3d import native_preview
+        if native_preview.load() is None:
+            self.skipTest("no native preview library on this platform")
+        mesh = box(7, 5, 2)
+        tied = Mesh(mesh.vertices, mesh.triangles * 88 + mesh.flipped().triangles)
+        for shape in (Mesh(), Mesh([(0., 0., 0.)], [(0, 0, 0)]), mesh.flipped(), tied):
+            with self.subTest(triangles=len(shape.triangles)):
+                self.assertEqual(contact_sheet(shape, 65, backend="native"),
+                                 contact_sheet(shape, 65, backend="python"))
 
 
 class ToolTests(unittest.TestCase):

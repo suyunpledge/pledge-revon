@@ -78,6 +78,9 @@ $ErrorActionPreference = 'Continue'
 $probe = "import revon, revon.cli, qt_frontend.app, qt_frontend.service_host, PySide6.QtWebEngineQuick; print('imports-ok')"
 $result = & (Join-Path $bundle 'revon-python.exe') -c $probe 2>&1 | Out-String
 if (-not ($result -match 'imports-ok')) { throw "Frozen runtime smoke failed:`n$result" }
+$preview = "from revon.model3d import contact_sheet; from revon.model3d.mesh import box; mesh=box(7,5,2); assert contact_sheet(mesh,64,backend='native') == contact_sheet(mesh,64,backend='python'); print('preview-ok')"
+$result = & (Join-Path $bundle 'revon-python.exe') -c $preview 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0 -or $result -notmatch 'preview-ok') { throw "Bundled 3D preview smoke failed:`n$result" }
 $selftest = & (Join-Path $bundle 'revon-python.exe') (Join-Path $app 'run.py') selftest 2>&1 | Select-Object -Last 1
 $ErrorActionPreference = 'Stop'
 Write-Output "Frozen selftest: $selftest"

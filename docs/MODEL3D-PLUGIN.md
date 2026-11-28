@@ -7,7 +7,7 @@
 
 | 层 | 位置 | 作用 |
 |---|---|---|
-| 几何引擎 | `revon/model3d/`（纯标准库） | 规格 → 网格 → 校验 → 导出 → 预览 |
+| 几何引擎 | `revon/model3d/`（标准库，四视图支持可选 C++ 加速） | 规格 → 网格 → 校验 → 导出 → 预览 |
 | Agent 工具 | `revon/model3d_tools.py`，在 `build_builtin_registry` 注册 | `model3d_build`（写）、`model3d_inspect`（读，延迟加载） |
 | 技能（内核） | `revon/bundled/model3d/SKILL.md`，`capability.BUNDLED_ROOT` | 进能力索引；`skill_list {"name":"model3d"}` 载入正文 |
 | 技能（桌面插件） | `revon-gui/catalog.builtin.json` 条目 `skill-model3d` | 安装→知悉→启用→授予 `skill.read` 后出现 `keystone_model3d_guide` |
@@ -39,6 +39,19 @@
 导出后从磁盘回读比对三角形数（STL 二进制/ASCII、OBJ：毫米；glTF/GLB：米、Y 轴向上）。预览：`<名>.preview.png`（等轴/前/顶/右四视图，内翻面洋红色）+ 文本模型可读的 ASCII 顶视/前视高度图（通孔显示为空白）。
 
 ## 验证
+
+Windows x64 版自带四视图 PNG 光栅化 DLL，首次生成预览时加载。其他平台及缺失或无法加载 DLL 的安装自动使用 Python。可在启动前设置 `REVON_3D_RENDERER=python` 强制使用 Python，恢复 `auto` 即可自动选择。两种实现共用投影、光照与 PNG 编码。
+
+维护者可用 MinGW-w64 x64 运行 `scripts/native/build-model3d-preview.ps1` 重建 DLL。用安装版执行 `Revon.exe verify/model3d_preview.py <新目录>` 可对四种模型连测三轮，记录两种实现的毫秒数并逐像素核对 PNG。
+
+Windows x64 安装版实测。每轮用 `model3d_build` 各生成一张 515×515 四视图，第二轮交换实现顺序。下表取三轮中位数，只计从已生成网格到 PNG 字节的时间，包括编码。24 张 PNG 经 Qt 解码均与提交 `097b810` 的对应图像逐像素一致。
+
+| 模型 | Python（毫秒） | C++（毫秒） |
+|---|---:|---:|
+| 长方体 | 167.1 | 5.3 |
+| 球体 | 383.0 | 19.6 |
+| 通孔板 | 383.9 | 12.9 |
+| 圆环 | 230.9 | 39.1 |
 
 - `python -m unittest revon.test_model3d`（几何、布尔、导出有效性、校验信息、工具权限、技能）
 - `revon-gui/test_plugin_model3d.py`（插件安装→知悉→启用→授权→加载正文→禁用撤销）

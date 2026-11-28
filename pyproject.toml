@@ -36,4 +36,4 @@ include = ["revon", "revon.*", "keystone"]
 revon = ["contrib/*.py", "contrib/*.md", "contrib/*.json",
          "bundles/*.json", "bundles/modes/*.json", "bundles/agents/*.json",
          "templates/*.py", "templates/*.json",
-         "bundled/*/*.md", "bundled/*/*.json"]
+         "bundled/*/*.md", "bundled/*/*.json", "model3d/preview-win-x64.dll"]
