@@ -40,18 +40,19 @@
 
 ## 验证
 
-Windows x64 版自带四视图 PNG 光栅化 DLL，首次生成预览时加载。其他平台及缺失或无法加载 DLL 的安装自动使用 Python。可在启动前设置 `REVON_3D_RENDERER=python` 强制使用 Python，恢复 `auto` 即可自动选择。两种实现共用投影、光照与 PNG 编码。
+Windows x64 版自带四视图预览 DLL，首次生成预览时加载。Python 每张预览只打包一次顶点坐标与三角形索引。四个视图共用这份网格，由 C++ 投影、计算光照并光栅化，再交给同一个 PNG 编码器。其他平台以及 DLL 缺失或版本不兼容时，默认使用 Python。可在启动前设置 `REVON_3D_RENDERER=python` 强制使用 Python，恢复 `auto` 即可自动选择。
 
-维护者可用 MinGW-w64 x64 运行 `scripts/native/build-model3d-preview.ps1` 重建 DLL。用安装版执行 `Revon.exe verify/model3d_preview.py <新目录>` 可对四种模型连测三轮，记录两种实现的毫秒数并逐像素核对 PNG。
+维护者可用 MinGW-w64 x64 运行 `scripts/native/build-model3d-preview.ps1` 重建 DLL。运行 `Revon.exe verify/model3d_preview.py <新目录> --profile` 会用五种模型连测三轮，核对 Python 与原生图像，另行采样各阶段耗时。旧版基线可用同一脚本生成，新版加上 `--reference <基线目录>` 即可交叉验证。
 
-Windows x64 安装版实测。每轮用 `model3d_build` 各生成一张 515×515 四视图，第二轮交换实现顺序。下表取三轮中位数，只计从已生成网格到 PNG 字节的时间，包括编码。24 张 PNG 经 Qt 解码均与提交 `097b810` 的对应图像逐像素一致。
+Windows x64 安装版 EXE 实测。每轮用 `model3d_build` 生成 515×515 四视图，第二轮交换实现顺序。下表是从网格到 PNG 的三轮中位数，包括编码。新版 30 张 PNG 经 Qt 解码，均与 `37eb1af` 的 Python 基线逐像素一致。
 
-| 模型 | Python（毫秒） | C++（毫秒） |
-|---|---:|---:|
-| 长方体 | 167.1 | 5.3 |
-| 球体 | 383.0 | 19.6 |
-| 通孔板 | 383.9 | 12.9 |
-| 圆环 | 230.9 | 39.1 |
+| 模型 | 原生旧版（毫秒） | 原生新版（毫秒） | 新版 Python（毫秒） |
+|---|---:|---:|---:|
+| 长方体 | 5.12 | 5.54 | 179.10 |
+| 球体 | 19.76 | 9.94 | 403.98 |
+| 通孔板 | 12.52 | 7.85 | 400.97 |
+| 圆环（3,072 面） | 42.32 | 9.48 | 238.93 |
+| 高面数圆环（24,576 面） | 285.74 | 22.93 | 591.81 |
 
 - `python -m unittest revon.test_model3d`（几何、布尔、导出有效性、校验信息、工具权限、技能）
 - `revon-gui/test_plugin_model3d.py`（插件安装→知悉→启用→授权→加载正文→禁用撤销）

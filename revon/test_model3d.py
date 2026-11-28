@@ -282,6 +282,24 @@ class ExportTests(unittest.TestCase):
 
 
 class PreviewRendererTests(unittest.TestCase):
+    def test_indexed_native_mesh_is_packed_once_for_four_views(self):
+        from revon.model3d import native_preview
+        if native_preview.load() is None:
+            self.skipTest("no native preview library on this platform")
+        mesh = box(7, 5, 2)
+        nv = len(mesh.vertices)
+        mesh.triangles = [(a-nv, b, c-nv) for a, b, c in mesh.triangles]
+        with patch.object(native_preview, "_pack_mesh", wraps=native_preview._pack_mesh) as pack:
+            png = contact_sheet(mesh, 83, backend="native")
+            pack.assert_called_once_with(mesh)
+        self.assertEqual(png, contact_sheet(mesh, 83, backend="python"))
+        for bad in (nv, -nv-1):
+            mesh.triangles = [(0, 1, bad)]
+            with self.subTest(index=bad), self.assertRaises(ValueError):
+                contact_sheet(mesh, 83, backend="native")
+            with self.assertRaises(IndexError):
+                contact_sheet(mesh, 83, backend="auto")
+
     def test_missing_library_falls_back_to_reference_pixels(self):
         mesh = box(7, 5, 2)
         with patch("revon.model3d.native_preview.load", return_value=None):
@@ -296,7 +314,7 @@ class PreviewRendererTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(rows).hexdigest(),
                          "a2314b8dfaa48d841158aa9ceff4d847da8421783a87631bf284fe0ffe81a35c")
 
-    def test_native_matches_empty_degenerate_back_faces_and_depth_across_batches(self):
+    def test_native_matches_empty_degenerate_back_faces_and_coplanar_depth_ties(self):
         from revon.model3d import native_preview
         if native_preview.load() is None:
             self.skipTest("no native preview library on this platform")

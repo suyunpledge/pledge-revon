@@ -1,5 +1,6 @@
 """Run with Revon.exe <this-script.py> <new-output-dir> [--reference <old-output-dir>]."""
 import argparse
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ MODELS = {
         {"op": "box", "size": [40, 40, 10]},
         {"op": "cylinder", "d": 20, "h": 12, "translate": [20, 20, -1]}]},
     "torus": {"op": "torus", "major": 20, "minor": 5, "segments": 64, "tube_segments": 24},
+    "torus_dense": {"op": "torus", "major": 20, "minor": 5, "segments": 192, "tube_segments": 64},
 }
 
 
@@ -30,10 +32,62 @@ def image(path):
     return decoded
 
 
+def profile_native(mesh, size):
+    """Time whole batches at the ABI boundary, outside the uninstrumented tool runs."""
+    from revon.model3d import native_preview as native, render
+
+    ns = dict(projection=0, packing=0, raster=0, png=0)
+
+    def timed(stage, func):
+        def call(*args):
+            start = perf_counter_ns()
+            result = func(*args)
+            ns[stage] += perf_counter_ns() - start
+            return result
+        return call
+
+    api = native.load()
+    with ExitStack() as hooks:
+        hooks.enter_context(patch.object(render, "png_bytes", timed("png", render.png_bytes)))
+        if hasattr(api, "project"):
+            hooked = api._replace(project=timed("projection", api.project), raster=timed("raster", api.raster))
+            hooks.enter_context(patch.object(native, "load", lambda: hooked))
+            hooks.enter_context(patch.object(native, "_pack_mesh", timed("packing", native._pack_mesh)))
+        else:
+            # The v1 ABI interleaves a lazy Python projection with packing. Drain
+            # exactly one original batch to separate their timings without per-face timers.
+            islice = native.islice
+            pack_start = 0
+
+            def batch(*args):
+                nonlocal pack_start
+                start = perf_counter_ns()
+                faces = tuple(islice(*args))
+                ns["projection"] += perf_counter_ns() - start
+                pack_start = perf_counter_ns()
+                return faces
+
+            def raster(*args):
+                start = perf_counter_ns()
+                ns["packing"] += start - pack_start
+                ok = api(*args)
+                ns["raster"] += perf_counter_ns() - start
+                return ok
+
+            hooks.enter_context(patch.object(native, "islice", batch))
+            hooks.enter_context(patch.object(native, "load", lambda: raster))
+        start = perf_counter_ns()
+        png = render.contact_sheet(mesh, size, backend="native")
+        total = perf_counter_ns() - start
+    ns["other"] = total - sum(ns.values())
+    return png, {key: round(value / 1e6, 4) for key, value in ns.items()}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--reference", type=Path)
+    parser.add_argument("--profile", action="store_true", help="also measure native stages in separate passes")
     parser.add_argument("--reference-only", action="store_true", help="record a single run with the old EXE")
     args = parser.parse_args()
     workspace = args.output.resolve()
@@ -66,12 +120,25 @@ def main():
                 if first is not None and pixels != first:
                     raise ValueError(f"Python and C++ pixels differ: {rel}")
                 if args.reference:
-                    old = image(args.reference / "1" / "reference" / (name + ".preview.png"))
+                    reference = args.reference / "1" / "reference"
+                    if not reference.is_dir():
+                        reference = args.reference / "1" / "python"
+                    old = image(reference / (name + ".preview.png"))
                     if pixels != old:
                         raise ValueError(f"Pixels differ from previous release: {rel}")
                 first = pixels
                 rows.append(dict(trial=trial + 1, model=name, backend=backend, ms=round(elapsed[0], 3)))
     report = {"exe": sys.executable, "module": model3d.__file__, "runs": rows}
+    if args.profile:
+        report["native_stages_ms"] = []
+        for trial in range(1, 4):
+            for name, spec in MODELS.items():
+                mesh, _ = model3d.compile_spec(spec)
+                png, stages = profile_native(mesh, 256)
+                expected = workspace / "1" / ("reference" if args.reference_only else "python") / (name + ".preview.png")
+                if png != expected.read_bytes():
+                    raise ValueError(f"Profiled pixels differ: {name}")
+                report["native_stages_ms"].append(dict(trial=trial, model=name, triangles=len(mesh.triangles), **stages))
     (workspace / "timings.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 
 

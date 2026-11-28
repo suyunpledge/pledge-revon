@@ -42,7 +42,7 @@ def _basis(name):
 
 
 def _projected_faces(mesh: Mesh, view: str, w: int, h: int, margin: int):
-    """Yield lit faces in draw order, using one projection for both rasterizers."""
+    """Yield lit faces in the Python reference renderer's draw order."""
     R, U, F = _basis(view)
     v = mesh.vertices
     proj = [(dot(p, R), dot(p, U), dot(p, F)) for p in v]
@@ -148,15 +148,14 @@ def contact_sheet(mesh: Mesh, size: int = 256, *, backend: str | None = None) ->
     size = max(64, min(1024, int(size)))
     W, H = size * 2 + 3, size * 2 + 3
     img = bytearray(b"\x9a\xa0\xaa") * (W * H)
-    for idx, view in enumerate(("iso", "front", "top", "right")):
-        tile = None
-        if draw is not None:
-            faces = _projected_faces(mesh, view, size, size, 6)
-            tile = native_preview.draw_tile(draw, faces, size, _face_color)
-            if tile is None and backend == "native":
-                raise ValueError("Native 3D preview could not rasterize this mesh")
-        if tile is None:
-            tile = _python_tile(mesh, view, size)
+    views = ("iso", "front", "top", "right")
+    tiles = None
+    if draw is not None:
+        tiles = native_preview.draw_tiles(draw, mesh, map(_basis, views), _norm((0.35, 0.25, 1.0)), size)
+        if tiles is None and backend == "native":
+            raise ValueError("Native 3D preview could not rasterize this mesh")
+    for idx, view in enumerate(views):
+        tile = tiles[idx] if tiles is not None else _python_tile(mesh, view, size)
         ox = 1 + (idx % 2) * (size + 1)
         oy = 1 + (idx // 2) * (size + 1)
         for y in range(size):
