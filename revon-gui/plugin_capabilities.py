@@ -382,7 +382,7 @@ class CapabilityRuntime:
 
     def call(self, name, args):
         from revon.policy import Policy
-        from revon.tools import ToolContext
+        from revon.tools import ToolContext, ToolResult
         with self._lock:
             meta, registry = self.tools.get(name), getattr(self, "registry", None)
         invocation = uuid.uuid4().hex
@@ -396,17 +396,21 @@ class CapabilityRuntime:
             # already admitted bounded host operation; subsequent calls are denied.
             with market_lock(self.market.market_dir / "state.lock"):
                 self.market.audit(**event, phase="attempt", outcome="pending")
-                if meta is None:
-                    raise PermissionError("未知插件工具")
-                self._current(meta)
-                if meta["capability"] == SKILL_CAPABILITY:
-                    if args:
-                        raise ValueError("技能工具不接受参数")
+                try:
+                    if meta is None:
+                        raise PermissionError("未知插件工具")
+                    self._current(meta)
+                    if meta["capability"] == SKILL_CAPABILITY:
+                        if args:
+                            raise ValueError("技能工具不接受参数")
+                    else:
+                        self._arguments(meta, args)
+                except PermissionError as exc:
+                    result = ToolResult(False, error=str(exc), meta={
+                        "authorization": "deny", "policy_source": "plugin", "execution_state": "not_started",
+                        "execution_may_have_completed": False})
                 else:
-                    self._arguments(meta, args)
-                # This registry gates the alias; dispatch MUST go to the trusted
-                # gateway's registry, which applies its real Policy to the target.
-                result = registry.invoke(name, args, context)
+                    result = registry.invoke(name, args, context)
                 if result.meta.get("authorization") in {"deny", "ask"}:
                     context.extras["plugin_execution_possible"] = False
                 if not result.ok and context.extras.get("plugin_execution_possible"):

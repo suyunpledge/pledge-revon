@@ -71,7 +71,10 @@ class CapabilityTests(unittest.TestCase):
         rt = self.runtime()
         self.assertTrue(rt.call("reader_tool", {"path": "hello.txt"})["ok"])
         self.other.revoke_grants("reader", workspace=self.ws)
-        self.assertFalse(rt.call("reader_tool", {"path": "hello.txt"})["ok"])
+        revoked = rt.call("reader_tool", {"path": "hello.txt"})
+        self.assertFalse(revoked["ok"])
+        self.assertEqual(revoked["meta"]["authorization"], "deny")
+        self.assertFalse(revoked["meta"]["execution_may_have_completed"])
         self.assertEqual(len(self.calls), 1)
 
     def test_workspace_and_session_scope(self):
@@ -178,6 +181,7 @@ class CapabilityTests(unittest.TestCase):
         with patch.object(rt, "dispatch", side_effect=OSError("offline")):
             failed = rt.call("reader_tool", {"path": "hello.txt"})
         self.assertTrue(failed["meta"]["execution_may_have_completed"])
+        self.assertNotEqual(failed["meta"].get("authorization"), "deny")
         rows = self.market.audit_tail()
         self.assertEqual([r["outcome"] for r in rows if r["phase"] == "result"],
                          ["allow", "deny", "error"])
@@ -340,7 +344,7 @@ class CapabilityTests(unittest.TestCase):
     def test_real_gateway_policy_and_audit_on_http_path(self):
         from revon.gateway import GatewayConfig, serve
         from revon_client import RevonGatewayClient
-        p = self.ready(target="write_file", capability="repo.write", contributions={"tools": [{
+        self.ready(target="write_file", capability="repo.write", contributions={"tools": [{
             "name": "reader_tool", "target": "write_file", "parameters": {"type": "object",
             "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
             "required": ["path", "content"]}}]})
@@ -352,20 +356,38 @@ class CapabilityTests(unittest.TestCase):
         try:
             client = RevonGatewayClient(f"http://127.0.0.1:{server.server_port}")
             rt = pc.CapabilityRuntime(self.market, self.ws, "real-http", client.call_tool)
-            rt.reload(available_targets=[s["function"]["name"] for s in client.list_tools()])
+
+            def discover():
+                rt.reload(available_targets=[s["function"]["name"] for s in client.list_tools()])
+
+            discover()
+            self.assertNotIn("reader_tool", rt.names())
+            local = rt.call("reader_tool", {"path": "hello.txt", "content": "blocked"})
+            self.assertEqual(local["meta"]["authorization"], "deny")
+            self.assertEqual(local["meta"]["execution_state"], "not_started")
+            self.assertNotIn("plugin_policy_checked", local["meta"])
+
+            cfg.policy = Policy(mode=Mode.ACCEPT_EDITS, workspace=self.ws)
+            discover()
+            self.assertIn("reader_tool", rt.names())
+            cfg.policy = self.policy
             denied = rt.call("reader_tool", {"path": "hello.txt", "content": "changed"})
             self.assertFalse(denied["ok"])
             self.assertEqual(denied["meta"]["authorization"], "deny")
+            self.assertTrue(denied["meta"]["plugin_policy_checked"])
             for rule in ("reader_tool", "plugin:reader:*", "repo.write"):
                 cfg.policy = Policy(mode=Mode.ACCEPT_EDITS, workspace=self.ws, deny=(rule,))
                 denied_alias = rt.call("reader_tool", {"path": "hello.txt", "content": "blocked"})
                 self.assertFalse(denied_alias["ok"], rule)
+                self.assertEqual(denied_alias["meta"]["authorization"], "deny")
+                self.assertTrue(denied_alias["meta"]["plugin_policy_checked"])
                 self.assertEqual((self.ws / "hello.txt").read_text(), "hello")
             cfg.policy = Policy(mode=Mode.ACCEPT_EDITS, workspace=self.ws)
             self.assertTrue(rt.call("reader_tool", {"path": "hello.txt", "content": "changed"})["ok"])
             self.assertEqual((self.ws / "hello.txt").read_text(), "changed")
             results = [r for r in self.market.audit_tail() if r["phase"] == "result"]
-            self.assertEqual([r["outcome"] for r in results], ["deny"] * 4 + ["allow"])
+            self.assertEqual([r["outcome"] for r in results], ["deny"] * 5 + ["allow"])
+            self.assertEqual([r["authorization"] for r in results], ["deny"] * 5 + ["allow"])
         finally:
             server.shutdown()
             server.server_close()

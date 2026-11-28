@@ -15,7 +15,8 @@ import test_navigation as navigation
 
 @contextmanager
 def market_app(*args, **kwargs):
-    with layout.isolated_app(*args, **kwargs) as (root, app, errors):
+    with patch.object(pm.Marketplace, "needs_remote_sync", return_value=False), \
+            layout.isolated_app(*args, **kwargs) as (root, app, errors):
         try:
             yield root, app, errors
         finally:
@@ -187,7 +188,7 @@ class MarketplaceUiTests(unittest.TestCase):
                                      app.market_canvas.winfo_rooty() + app.market_canvas.winfo_height())
                 if not app.sidebar.winfo_ismapped():
                     app.sidebar_reveal_btn.invoke()
-                    pump(root)
+                    layout.pump(root)
                 self.assertTrue(app.sidebar_back_btn.winfo_ismapped())
                 self.assertEqual(errors, [])
 
